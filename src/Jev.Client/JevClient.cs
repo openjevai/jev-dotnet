@@ -11,8 +11,14 @@ namespace Jev;
 /// </summary>
 public sealed class JevClient : IDisposable
 {
-    private const string EnvKey = "TYPESAFE_API_KEY";
-    private static readonly HashSet<int> Retryable = [429, 529];
+    private const string TypeSafeEnvKey = "TYPESAFE_API_KEY";
+    private const string OpenJEVEnvKey = "OPENJEV_API_KEY";
+    private const string ProviderEnvKey = "JEV_PROVIDER";
+    private static readonly Uri TypeSafeBaseUrl = new("https://api.typesafe.ai");
+    private const string TypeSafeModel = "jev-latest";
+    private static readonly Uri OpenJEVBaseUrl = new("https://api.openjev.sh");
+    private const string OpenJEVModel = "openjev";
+    private static readonly HashSet<int> Retryable = [429, 503, 529];
 
     private readonly HttpClient _http;
     private readonly string _model;
@@ -23,10 +29,23 @@ public sealed class JevClient : IDisposable
     public JevClient(JevClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        var apiKey = options.ApiKey ?? Environment.GetEnvironmentVariable(EnvKey);
+
+        var provider = ResolveProvider(options);
+        var baseUrl = options.BaseUrl;
+        var model = options.Model;
+        var envKey = provider == JevProvider.OpenJEV ? OpenJEVEnvKey : TypeSafeEnvKey;
+
+        // Swap TypeSafe defaults to OpenJEV when the user hasn't customised them.
+        if (provider == JevProvider.OpenJEV)
+        {
+            if (baseUrl == TypeSafeBaseUrl) baseUrl = OpenJEVBaseUrl;
+            if (model == TypeSafeModel) model = OpenJEVModel;
+        }
+
+        var apiKey = options.ApiKey ?? Environment.GetEnvironmentVariable(envKey);
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            throw new JevException($"No API key. Set {EnvKey} or JevClientOptions.ApiKey.");
+            throw new JevException($"No API key. Set {envKey} or JevClientOptions.ApiKey.");
         }
 
         _http = new HttpClient(options.Handler ?? new HttpClientHandler(), disposeHandler: true)
@@ -34,9 +53,34 @@ public sealed class JevClient : IDisposable
             Timeout = options.Timeout,
         };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-        _model = options.Model;
+        _model = model;
         _maxRetries = Math.Max(0, options.MaxRetries);
-        _endpoint = EndpointFor(options.BaseUrl);
+        _endpoint = EndpointFor(baseUrl);
+    }
+
+    /// <summary>
+    /// Resolve the provider: explicit <see cref="JevClientOptions.Provider"/> wins;
+    /// then <c>JEV_PROVIDER</c> env; then TypeSafe if its key is set; then OpenJEV if
+    /// its key is set; otherwise TypeSafe (the default, which will fail on a missing key).
+    /// </summary>
+    private static JevProvider ResolveProvider(JevClientOptions options)
+    {
+        if (options.Provider is { } explicit)
+            return explicit;
+
+        var env = Environment.GetEnvironmentVariable(ProviderEnvKey);
+        if (string.Equals(env, "openjev", StringComparison.OrdinalIgnoreCase))
+            return JevProvider.OpenJEV;
+        if (string.Equals(env, "typesafe", StringComparison.OrdinalIgnoreCase))
+            return JevProvider.TypeSafe;
+
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(TypeSafeEnvKey)))
+            return JevProvider.TypeSafe;
+
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(OpenJEVEnvKey)))
+            return JevProvider.OpenJEV;
+
+        return JevProvider.TypeSafe;
     }
 
     // A leading-slash relative Uri would replace BaseUrl's path, dropping e.g. a proxy prefix.
@@ -52,7 +96,7 @@ public sealed class JevClient : IDisposable
     {
     }
 
-    /// <summary>Create a client that reads its key from <c>TYPESAFE_API_KEY</c>.</summary>
+    /// <summary>Create a client that auto-detects its provider and key from the environment (TYPESAFE_API_KEY, OPENJEV_API_KEY, or JEV_PROVIDER).</summary>
     public static JevClient FromEnvironment() => new(new JevClientOptions());
 
     /// <summary>
@@ -120,6 +164,7 @@ public sealed class JevClient : IDisposable
         401 => new JevAuthException("Unauthorized: invalid or missing API key.", body),
         422 => new JevValidationException("Unprocessable entity: the request was rejected as malformed.", body),
         429 => new JevRateLimitException("Rate limit exceeded; retries exhausted.", body),
+        503 => new JevServiceUnavailableException("Service unavailable; retries exhausted.", body),
         529 => new JevOverloadedException("Service overloaded; retries exhausted.", body),
         _ => new JevException($"Unexpected HTTP {status} from Jev.", status, body),
     };

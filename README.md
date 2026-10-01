@@ -8,6 +8,8 @@ calibrated confidence, which your code can act on directly.
 > Unofficial community SDK. Not published or endorsed by TypeSafe. Built against the
 > public API at `https://api.typesafe.ai`.
 
+> **OpenJEV support:** Jev is built by [TypeSafe](https://typesafe.ai). This fork keeps TypeSafe as the default and adds optional support for [OpenJEV](https://openjev.sh), a free community gateway to the same Jev model — set `OPENJEV_API_KEY` (or `JEV_PROVIDER=openjev`) to use it. Original project: https://github.com/CMaintz/jev-dotnet by @CMaintz.
+
 ## Why
 
 A chat LLM hands you a paragraph you have to parse and second-guess. Jev hands you a
@@ -104,9 +106,10 @@ All failures derive from `JevException`, which carries `StatusCode` and `Respons
 | `JevAuthException` | 401 | missing or invalid API key |
 | `JevValidationException` | 422 | the request was rejected as malformed |
 | `JevRateLimitException` | 429 | rate limited; retries exhausted |
+| `JevServiceUnavailableException` | 503 | service unavailable; retries exhausted (OpenJEV) |
 | `JevOverloadedException` | 529 | service overloaded; retries exhausted |
 
-`429` and `529` are retried automatically with exponential backoff (honoring
+`429`, `503` and `529` are retried automatically with exponential backoff (honoring
 `Retry-After` when present); `MaxRetries` is configurable.
 
 ## Configuration
@@ -114,8 +117,9 @@ All failures derive from `JevException`, which carries `StatusCode` and `Respons
 ```csharp
 using var client = new JevClient(new JevClientOptions
 {
-    ApiKey = "sk-...",                            // or leave null to read TYPESAFE_API_KEY
+    ApiKey = "sk-...",                            // or leave null to read TYPESAFE_API_KEY / OPENJEV_API_KEY
     Model = "jev-latest",                         // tracks the recommended model
+    Provider = JevProvider.TypeSafe,              // or JevProvider.OpenJEV; null = auto-detect (default)
     Timeout = TimeSpan.FromSeconds(30),
     MaxRetries = 3,
     BaseUrl = new Uri("https://api.typesafe.ai"),   // e.g. a proxy; its path prefix is kept

@@ -30,6 +30,10 @@ public sealed class JevValidationException(string message, string? responseBody 
 public sealed class JevRateLimitException(string message, string? responseBody = null)
     : JevException(message, 429, responseBody);
 
+/// <summary>503: the service is unavailable and retries were exhausted (OpenJEV overload status).</summary>
+public sealed class JevServiceUnavailableException(string message, string? responseBody = null)
+    : JevException(message, 503, responseBody);
+
 /// <summary>529: the service was overloaded and retries were exhausted.</summary>
 public sealed class JevOverloadedException(string message, string? responseBody = null)
     : JevException(message, 529, responseBody);
